@@ -193,6 +193,12 @@ async def main_():
         all_commits_executed = await run_tasks_in_batches(session, search_tasks, limit_type="search")
         
         print(all_commits_executed)
+        for response in all_commits_executed : 
+            if response.status == 200:
+                data = await response.json()
+                items = data.get('items', [])    
+                print(f'items len {len(items)}')
+                
         print(len(all_commits_executed))
 if __name__ == "__main__":
     asyncio.run(main_())
