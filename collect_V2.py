@@ -3,6 +3,7 @@ import asyncio
 import aiohttp
 import base64
 import json
+from aiolimiter import AsyncLimiter
 from dotenv import load_dotenv
 import time
 
@@ -13,16 +14,13 @@ api_url_commits = "https://api.github.com/search/commits"
 gh_apikey = os.getenv('TOKEN_GITHUB')
 
 # Palabras clave y prefijos para las consultas
-keywords = [
+keywords =  [
     "sql injection", 
-    # (otros keywords)
 ]
 
 prefixes = [
-    "vulnerable", "fix", "attack", "correct", "malicious", 
-    # (otros prefixes)
+    "vulnerable",
 ]
-
 # Función para verificar la tasa de búsqueda y otras restricciones
 async def check_rate_limit(session):
     async with session.get("https://api.github.com/rate_limit", headers={
@@ -67,6 +65,7 @@ async def get_file_content(session, owner, repo, file_path, ref):
             return None
 
 # Guardar el código vulnerable y corregido en un archivo JSON en la carpeta correspondiente
+"""
 def save_to_json(vuln_code, fixed_code, file_type, commit_url, file_path, keyword, prefix):
     data = {
         "vuln_code": vuln_code,
@@ -88,7 +87,7 @@ def save_to_json(vuln_code, fixed_code, file_type, commit_url, file_path, keywor
         print(f"Guardado exitosamente en {json_file_name}")
     except Exception as e:
         print(f"Error al guardar el archivo JSON: {e}")
-
+"""
 
 
 # Función para procesar archivos de los commits
@@ -109,8 +108,8 @@ async def process_commit_files(session, commit, k, p):
         fixed_code = await get_file_content(session, owner, repo, file_path, sha)
 
         if vuln_code and fixed_code:
-            save_to_json(vuln_code, fixed_code, file_type, commit_url, file_path, k, p)
-
+            #save_to_json(vuln_code, fixed_code, file_type, commit_url, file_path, k, p)
+            pass
 
 # Obtener el tamaño de lote dinámico basado en el rate limit
 async def get_batch_size(session, limit_type):
@@ -135,28 +134,33 @@ async def main():
 # Función para buscar commits
 
 # Procesar los resultados asíncronamente por lotes, respetando el rate limit
-async def run_tasks_in_batches(session, tasks, limit_type):
-    batch_size = await get_batch_size(session, limit_type)
-    total_results_per_task = []
-    
-    # Ejecutar las tareas en lotes según el batch_size (rate limit)
-    for i in range(0, len(tasks), batch_size):
-        batch = tasks[i:i + batch_size]
-        data = await asyncio.gather(*batch)
-        total_results_per_task.extend(data)
-        
-        # Verificar si el límite de tasa se ha alcanzado
-        search_limit, search_reset, core_limit, core_reset = await check_rate_limit(session)
-        if limit_type == "search" and search_limit <= 0:
-            await sleep_until_reset(search_reset)
-        if limit_type == "core" and core_limit <= 0:
-            await sleep_until_reset(core_reset)
+# Procesar los resultados asíncronamente por lotes, respetando el rate limit
+github_rate_limiter = AsyncLimiter(25, 60)  # Máximo 30 solicitudes por minuto
 
-    return total_results_per_task
+# Crear un semáforo para limitar el número de tareas que se ejescutan simultáneamente
+semaphore = asyncio.Semaphore(25)  # Limitar a 10 tareas en paralelo
 
-# Función que realiza la búsqueda de commits pero crea las tareas sin ejecutarlas
+# Función para esperar hasta que el rate limit se reinicie y reintentar
 async def execute_search_commit_request(session, params):
-    return await session.get(api_url_commits, headers={"Authorization": f"Bearer {gh_apikey}"}, params=params)
+    while True:
+        async with session.get(api_url_commits, headers={"Authorization": f"Bearer {gh_apikey}"}, params=params) as response:
+            if response.status == 200:
+                print(200)
+                data = await response.json()
+                items = data.get('items', [])
+                if not items:
+                    print(f"No hay más resultados en la página .Terminando búsqueda.")
+                    return []
+                return items
+            elif response.status == 403:  # Rate limit alcanzado
+                print("Límite de búsqueda alcanzado. Esperando...")
+                search_limit, search_reset, _, _ = await check_rate_limit(session)
+                await sleep_until_reset(search_reset)  # Esperar hasta que se reinicie el rate limit
+                # Reintentar después de que el límite se reinicie
+            else:
+                print(f"Error en la búsqueda de commits: {response.status}")
+                return None
+
 
 # Crear las tareas sin ejecutarlas inmediatamente
 async def search_commits(session, query, page=1, per_page=100, max_page=10):
@@ -171,34 +175,50 @@ async def search_commits(session, query, page=1, per_page=100, max_page=10):
         page += 1
     return tasks
 
-# Crear las tareas para la búsqueda de commits
-async def process_search_and_files_(session, query, k, p):
-    print(f'process search for  : {query}')
-    return await search_commits(session, query)
+# Procesar los resultados asíncronamente por lotes, respetando el rate limit
+async def run_tasks_in_batches(session, tasks):
+    total_results_per_task = []
+    
+    for batch in asyncio.as_completed(tasks, timeout=None):
+        result = await batch
+        total_results_per_task.extend(result)
+        await asyncio.sleep(1)
+         # Pausar 1 segundo entre lotes para respetar el rate limit
 
+    return total_results_per_task
+def save_to_json(data, filename="commits_results.json"):
+    try:
+        with open(filename, 'w') as file:
+            json.dump(data, file, indent=4)
+        print(f"Datos guardados exitosamente en {filename}")
+    except Exception as e:
+        print(f"Error al guardar en archivo JSON: {e}")
 # Función principal
 async def main_():
-   async with aiohttp.ClientSession() as session:
+    async with aiohttp.ClientSession() as session:
         search_tasks = []
         
-        # Crear todas las tareas pero no ejecutarlas aún
         for k in keywords:
             for p in prefixes:
                 query = f"{k}+{p}"
-                print(query)
-                search_tasks.extend(await process_search_and_files_(session, query, k, p))
-                print(f"Total tareas creadas: {len(search_tasks)}")
+                print(f"process search for: {query}")
+                search_tasks.extend(await search_commits(session, query))
 
+        print(f"Total tareas creadas: {len(search_tasks)}")
         # Ejecutar las tareas en lotes respetando el rate limit
-        all_commits_executed = await run_tasks_in_batches(session, search_tasks, limit_type="search")
-        
+        all_commits_executed = await run_tasks_in_batches(session, search_tasks)
         print(all_commits_executed)
-        for response in all_commits_executed : 
-            if response.status == 200:
-                data = await response.json()
-                items = data.get('items', [])    
-                print(f'items len {len(items)}')
-                
-        print(len(all_commits_executed))
+        # Procesar las respuestas
+        save_to_json(all_commits_executed)
+        """
+        for response in all_commits_executed:
+            if response:
+                try:
+                    if response.status == 200:
+                        data = await response.json()
+                        # Procesa los datos de los commits obtenidos
+                except Exception as e:
+                    print(f"Error al procesar la respuesta: {e}")"""
+
 if __name__ == "__main__":
     asyncio.run(main_())
