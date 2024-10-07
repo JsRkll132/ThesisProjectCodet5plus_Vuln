@@ -6,25 +6,39 @@ import json
 from aiolimiter import AsyncLimiter
 from dotenv import load_dotenv
 import time
-
+from itertools import cycle
 # Cargar las variables de entorno
 load_dotenv()
 
 api_url_commits = "https://api.github.com/search/commits"
 gh_apikey = os.getenv('TOKEN_GITHUB')
-
+github_tokens = [
+    os.getenv('TOKEN_GITHUB'),
+    os.getenv('TOKEN_GITHUB_2'),]
 # Palabras clave y prefijos para las consultas
 keywords =  [
-    "sql injection", 
+    "sql injection", "unauthorised", "directory traversal", "rce", 
+    "buffer overflow", "denial of service", "dos", "XXE", "vuln", "CVE", 
+    "XSS", "NVD", "malicious", "cross site", "exploit", "remote code execution", 
+    "XSRF", "cross site request forgery", "click jack", "clickjack", 
+    "session fixation", "cross origin", "infinite loop", "brute force", 
+    "cache overflow", "command injection", "cross frame scripting", "csv injection", 
+    "eval injection", "execution after redirect", "format string", 
+    "path disclosure", "function injection", "replay attack", 
+    "session hijacking", "smurf", "unauthorized", "flooding", "tampering", 
+    "sanitize", "sanitise"
 ]
 
 prefixes = [
-    "vulnerable",
+    "vulnerable", "fix", "attack","correct" , "malicious", 
+    "insecure", "vulnerability", "prevent", "protect", "issue", 
+    "update", "improve", "change", "check"
 ]
 # Función para verificar la tasa de búsqueda y otras restricciones
 async def check_rate_limit(session):
+    global current_token
     async with session.get("https://api.github.com/rate_limit", headers={
-        "Authorization": f"Bearer {gh_apikey}"
+        "Authorization": f"Bearer {current_token}"
     }) as response:
         data = await response.json()
         search_limit = data['resources']['search']['remaining']
@@ -41,16 +55,7 @@ async def sleep_until_reset(reset_time):
         print(f"Esperando {sleep_duration / 60:.2f} minutos para reiniciar la tasa...")
         await asyncio.sleep(sleep_duration + 1)
 
-# Obtener los archivos modificados de un commit específico
-async def get_commit_files(session, owner, repo, sha):
-    commit_url = f"https://api.github.com/repos/{owner}/{repo}/commits/{sha}"
-    async with session.get(commit_url, headers={"Authorization": f"Bearer {gh_apikey}"}) as response:
-        if response.status == 200:
-            commit_data = await response.json()
-            return commit_data.get('files', [])
-        else:
-            print(f"Error al obtener los archivos del commit: {response.status}")
-            return []
+
 
 # Obtener el contenido de un archivo en un commit específico
 async def get_file_content(session, owner, repo, file_path, ref):
@@ -139,27 +144,43 @@ github_rate_limiter = AsyncLimiter(25, 60)  # Máximo 30 solicitudes por minuto
 
 # Crear un semáforo para limitar el número de tareas que se ejescutan simultáneamente
 semaphore = asyncio.Semaphore(25)  # Limitar a 10 tareas en paralelo
-
+token_cycle = cycle(github_tokens)
+def get_next_token():
+    return next(token_cycle)
+current_token = get_next_token()
 # Función para esperar hasta que el rate limit se reinicie y reintentar
 async def execute_search_commit_request(session, params):
+    global current_token
     while True:
-        async with session.get(api_url_commits, headers={"Authorization": f"Bearer {gh_apikey}"}, params=params) as response:
-            if response.status == 200:
-                print(200)
-                data = await response.json()
-                items = data.get('items', [])
-                if not items:
-                    print(f"No hay más resultados en la página .Terminando búsqueda.")
-                    return []
-                return items
-            elif response.status == 403:  # Rate limit alcanzado
-                print("Límite de búsqueda alcanzado. Esperando...")
-                search_limit, search_reset, _, _ = await check_rate_limit(session)
-                await sleep_until_reset(search_reset)  # Esperar hasta que se reinicie el rate limit
-                # Reintentar después de que el límite se reinicie
-            else:
-                print(f"Error en la búsqueda de commits: {response.status}")
-                return None
+        try : 
+            async with session.get(api_url_commits, headers={"Authorization": f"Bearer {current_token}"}, params=params,timeout=aiohttp.ClientTimeout(total=60)) as response:
+                if response.status == 200:
+                    print("200 OK")
+                    data = await response.json()
+                    items = data.get('items', [])
+                    params_ = params['q'].split('+')
+                    for item in items : 
+                        item['keyword'] =  params_[0]
+                        item['prefix'] =  params_[1]      
+                    return items 
+                elif response.status == 403:
+                    current_token = get_next_token()
+                    error_data = await response.json()
+                    if "secondary rate limit" in error_data.get('message', '').lower():
+                        print("Límite secundario alcanzado. Esperando 1 minutos...")
+                        await asyncio.sleep(60)  # Espera de 5 minutos antes de reintentar
+                    else:
+                        
+                        search_limit, search_reset, _, _ = await check_rate_limit(session)
+                        if search_limit == 0 : 
+                            print("Límite de búsqueda alcanzado. Esperando...")
+                            await sleep_until_reset(search_reset)
+                else:
+                    print(f"Error {response.status} en la búsqueda de commits.")
+                    return None
+        except Exception as e : 
+            print(f"Error de conexión: {e}") 
+            await asyncio.sleep(5)
 
 
 # Crear las tareas sin ejecutarlas inmediatamente
@@ -194,6 +215,18 @@ def save_to_json(data, filename="commits_results.json"):
     except Exception as e:
         print(f"Error al guardar en archivo JSON: {e}")
 # Función principal
+
+# Obtener los archivos modificados de un commit específico
+async def get_commit_files(session, owner, repo, sha):
+    commit_url = f"https://api.github.com/repos/{owner}/{repo}/commits/{sha}"
+    async with session.get(commit_url, headers={"Authorization": f"Bearer {gh_apikey}"}) as response:
+        if response.status == 200:
+            commit_data = await response.json()
+            return commit_data.get('files', [])
+        else:
+            print(f"Error al obtener los archivos del commit: {response.status}")
+            return []
+
 async def main_():
     async with aiohttp.ClientSession() as session:
         search_tasks = []
@@ -207,9 +240,10 @@ async def main_():
         print(f"Total tareas creadas: {len(search_tasks)}")
         # Ejecutar las tareas en lotes respetando el rate limit
         all_commits_executed = await run_tasks_in_batches(session, search_tasks)
-        print(all_commits_executed)
-        # Procesar las respuestas
         save_to_json(all_commits_executed)
+        #print(all_commits_executed)
+        # Procesar las respuestas
+        
         """
         for response in all_commits_executed:
             if response:
@@ -221,4 +255,9 @@ async def main_():
                     print(f"Error al procesar la respuesta: {e}")"""
 
 if __name__ == "__main__":
-    asyncio.run(main_())
+    start_time = time.time()  # Registrar el tiempo de inicio
+    asyncio.run(main_())  # Ejecutar la función principal
+    end_time = time.time()  # Registrar el tiempo de fin
+    total_time = end_time - start_time  # Calcular el tiempo total en segundos
+    total_time_minutes = total_time / 60  # Convertir a minutos
+    print(f"Tiempo total de ejecución: {total_time_minutes:.2f} minutos")

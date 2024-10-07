@@ -12,8 +12,24 @@ api_url_commits = "https://api.github.com/search/commits"
 gh_apikey = os.getenv('TOKEN_GITHUB')
 
 # Palabras clave y prefijos para las consultas
-keywords = ["sql injection"]
-prefixes = ["fix"]
+keywords = [
+    "sql injection", "unauthorised", "directory traversal", "rce", 
+    "buffer overflow", "denial of service", "dos", "XXE", "vuln", "CVE", 
+    "XSS", "NVD", "malicious", "cross site", "exploit", "remote code execution", 
+    "XSRF", "cross site request forgery", "click jack", "clickjack", 
+    "session fixation", "cross origin", "infinite loop", "brute force", 
+    "cache overflow", "command injection", "cross frame scripting", "csv injection", 
+    "eval injection", "execution after redirect", "format string", 
+    "path disclosure", "function injection", "replay attack", 
+    "session hijacking", "smurf","unauthorized" , "flooding", "tampering", 
+    "sanitize", "sanitise"
+]
+
+prefixes = [
+    "vulnerable", "fix", "attack","correct" , "malicious", 
+    "insecure", "vulnerability", "prevent", "protect", "issue", 
+    "update", "improve", "change", "check"
+]
 
 # Función para verificar la tasa de búsqueda
 def check_search_rate_limit():
@@ -37,6 +53,7 @@ def sleep_if_rate_limited():
 # Función para obtener los archivos modificados de un commit específico
 def get_commit_files(owner, repo, sha):
     commit_url = f"https://api.github.com/repos/{owner}/{repo}/commits/{sha}"
+    sleep_if_rate_limited()
     response = r.get(commit_url, headers={"Authorization": f"Bearer {gh_apikey}"})
     
     if response.status_code == 200:
@@ -48,6 +65,7 @@ def get_commit_files(owner, repo, sha):
 # Función para obtener el contenido de un archivo en un commit específico
 def get_file_content(owner, repo, file_path, ref):
     file_url = f"https://api.github.com/repos/{owner}/{repo}/contents/{file_path}?ref={ref}"
+    sleep_if_rate_limited()
     response = r.get(file_url, headers={"Authorization": f"Bearer {gh_apikey}"})
     
     if response.status_code == 200:
@@ -58,8 +76,8 @@ def get_file_content(owner, repo, file_path, ref):
         print(f"Error al obtener el archivo: {response.status_code}")
         return None
 
-# Función para guardar el código vulnerable y corregido en un archivo JSON
-def save_to_json(vuln_code, fixed_code, file_type, commit_url, file_path):
+# Función para guardar el código vulnerable y corregido en un archivo JSON en la carpeta correspondiente
+def save_to_json(vuln_code, fixed_code, file_type, commit_url, file_path, keyword, prefix):
     # Crear la estructura de datos
     data = {
         "vuln_code": vuln_code,
@@ -69,12 +87,13 @@ def save_to_json(vuln_code, fixed_code, file_type, commit_url, file_path):
         "file_path": file_path
     }
     
-    # Crear una carpeta 'vulnerabilities' si no existe
-    if not os.path.exists("vulnerabilities"):
-        os.makedirs("vulnerabilities")
+    # Crear las carpetas basadas en keywords y prefixes
+    folder_path = f"vulnerabilities/{keyword}/{prefix}"
+    if not os.path.exists(folder_path):
+        os.makedirs(folder_path)
     
     # Nombre del archivo JSON basado en la ruta del archivo
-    json_file_name = f"vulnerabilities/{file_path.replace('/', '_')}.json"
+    json_file_name = f"{folder_path}/{file_path.replace('/', '_')}.json"
     
     try:
         # Guardar los datos en un archivo JSON
@@ -86,7 +105,7 @@ def save_to_json(vuln_code, fixed_code, file_type, commit_url, file_path):
         print(f"Error al guardar el archivo JSON: {e}")
 
 # Implementación de paginación para buscar commits
-def search_commits(query, max_pages=3):
+def search_commits(query, max_pages=10):
     page = 1
     per_page = 100  # Máximo de resultados por página
     total_results = []
@@ -158,13 +177,12 @@ for k in keywords:
                     # Código vulnerable (antes del commit)
                     previous_sha = commit['parents'][0]['sha']
                     vuln_code = get_file_content(owner, repo, file_path, previous_sha)
-                    print(vuln_code)
                     # Código corregido (después del commit)
                     fixed_code = get_file_content(owner, repo, file_path, sha)
 
                     # Guardar la información en un archivo JSON
                     if vuln_code and fixed_code:
-                        save_to_json(vuln_code, fixed_code, file_type, commit_url, file_path)
+                        save_to_json(vuln_code, fixed_code, file_type, commit_url, file_path, k, p)
                     else:
                         print(f"No se pudo obtener el código completo para {file_path}")
                 except Exception as e:
