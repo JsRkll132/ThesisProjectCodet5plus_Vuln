@@ -14,9 +14,16 @@ api_url_commits = "https://api.github.com/search/commits"
 gh_apikey = os.getenv('TOKEN_GITHUB')
 github_tokens = [
     os.getenv('TOKEN_GITHUB'),
-    os.getenv('TOKEN_GITHUB_2'),]
+    os.getenv('TOKEN_GITHUB_2'),
+    os.getenv('TOKEN_GITHUB_3'),
+    os.getenv('TOKEN_GITHUB_4'),
+    os.getenv('TOKEN_GITHUB_5'),
+    os.getenv('TOKEN_GITHUB_6'),
+    os.getenv('TOKEN_GITHUB_7'),
+    os.getenv('will')]
 # Palabras clave y prefijos para las consultas
-keywords =  [
+"""
+keywords = [
     "sql injection", "unauthorised", "directory traversal", "rce", 
     "buffer overflow", "denial of service", "dos", "XXE", "vuln", "CVE", 
     "XSS", "NVD", "malicious", "cross site", "exploit", "remote code execution", 
@@ -25,15 +32,20 @@ keywords =  [
     "cache overflow", "command injection", "cross frame scripting", "csv injection", 
     "eval injection", "execution after redirect", "format string", 
     "path disclosure", "function injection", "replay attack", 
-    "session hijacking", "smurf", "unauthorized", "flooding", "tampering", 
+    "session hijacking", "smurf","unauthorized" , "flooding", "tampering", 
     "sanitize", "sanitise"
+]"""
+
+keywords = [
+    "ssrf","server side request forgery"
 ]
 
 prefixes = [
-    "vulnerable", "fix", "attack","correct" , "malicious", 
+    "vulnerable", "fix", "attack", "correct", "malicious", 
     "insecure", "vulnerability", "prevent", "protect", "issue", 
     "update", "improve", "change", "check"
 ]
+
 # Función para verificar la tasa de búsqueda y otras restricciones
 async def check_rate_limit(session):
     global current_token
@@ -163,12 +175,13 @@ async def execute_search_commit_request(session, params):
                         item['keyword'] =  params_[0]
                         item['prefix'] =  params_[1]      
                     return items 
-                elif response.status == 403:
+                elif response.status == 429 or response.status== 403:
                     current_token = get_next_token()
+                    
                     error_data = await response.json()
                     if "secondary rate limit" in error_data.get('message', '').lower():
                         print("Límite secundario alcanzado. Esperando 1 minutos...")
-                        await asyncio.sleep(60)  # Espera de 5 minutos antes de reintentar
+                        await asyncio.sleep(6)  # Espera de 5 minutos antes de reintentar
                     else:
                         
                         search_limit, search_reset, _, _ = await check_rate_limit(session)
@@ -199,18 +212,20 @@ async def search_commits(session, query, page=1, per_page=100, max_page=10):
 # Procesar los resultados asíncronamente por lotes, respetando el rate limit
 async def run_tasks_in_batches(session, tasks):
     total_results_per_task = []
-    
+    task = 0
     for batch in asyncio.as_completed(tasks, timeout=None):
         result = await batch
         total_results_per_task.extend(result)
-        await asyncio.sleep(1)
+        task+=1
+        print(task)
+        #await asyncio.sleep(1)
          # Pausar 1 segundo entre lotes para respetar el rate limit
 
     return total_results_per_task
-def save_to_json(data, filename="commits_results.json"):
+def save_to_json(data, filename="commits_results_ssrf.json"):
     try:
         with open(filename, 'w') as file:
-            json.dump(data, file, indent=4)
+            json.dump(data, file,separators=(',', ':'))
         print(f"Datos guardados exitosamente en {filename}")
     except Exception as e:
         print(f"Error al guardar en archivo JSON: {e}")

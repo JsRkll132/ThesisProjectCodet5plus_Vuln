@@ -437,10 +437,6 @@ async def procces_commit_diffs(diff_text) :
         return []
 async def async_chardet(file_data) : 
     return chardet.detect(file_data)
-
-
-MAX_DIFF_SIZE = 500_000
-
 async def get_commit_all_fileDiffs (session, hmtl_commit_url) : 
     fz3 = 1
     while fz3>=0:
@@ -454,9 +450,6 @@ async def get_commit_all_fileDiffs (session, hmtl_commit_url) :
                             try : 
                                 
                                 file_data = await response.read()
-                                if len(file_data) > MAX_DIFF_SIZE:
-                                    print(f"El commit es demasiado grande ({len(file_data)} bytes), omitiendo.")
-                                    return None
                                 result = await asyncio.wait_for(async_chardet(file_data=file_data),timeout=90)
                                 encoding = result['encoding']
                                 file_content = file_data.decode(encoding)
@@ -606,8 +599,8 @@ async def main_(input_file, output_file):
                     tasks.append(asyncio.create_task(make_procces_diffs_collect(session=session,commit=commit)))
             await run_tasks_in_batches_files(session=session,tasks=tasks,output_file = output_file)
            # await asyncio.gather(*all_commit_with_diffs_toJson_tasks)
-            #if len(all_commit_with_diffs_toJson) != 0:
-            #   save_to_json(all_commit_with_diffs_toJson,output_file)
+            if len(all_commit_with_diffs_toJson) != 0:
+                save_to_json(all_commit_with_diffs_toJson,output_file)
             #save_to_json(all_data_files,"location_commit_files.json")
     #    print(data[0])
     

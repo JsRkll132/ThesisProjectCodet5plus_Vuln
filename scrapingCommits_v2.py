@@ -13,6 +13,7 @@ api_url_commits = "https://api.github.com/search/commits"
 gh_apikey = os.getenv('TOKEN_GITHUB')
 
 # Palabras clave y prefijos para las consultas
+"""
 keywords = [
     "sql injection", "unauthorised", "directory traversal", "rce", 
     "buffer overflow", "denial of service", "dos", "XXE", "vuln", "CVE", 
@@ -24,8 +25,10 @@ keywords = [
     "path disclosure", "function injection", "replay attack", 
     "session hijacking", "smurf","unauthorized" , "flooding", "tampering", 
     "sanitize", "sanitise"
+]"""
+keywords = [
+    "ssrf","server side request forgery"
 ]
-
 prefixes = [
     "vulnerable", "fix", "attack", "correct", "malicious", 
     "insecure", "vulnerability", "prevent", "protect", "issue", 
